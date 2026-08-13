@@ -21,7 +21,8 @@ def _env(request: Request):
 
 
 def _value(env, name: str) -> str:
-    return str(getattr(env, name))
+    value = getattr(env, name, None)
+    return "" if value is None else str(value)
 
 
 def _store(request: Request) -> D1ReviewStore:
@@ -50,7 +51,9 @@ async def cors(request: Request, call_next):
         response = await call_next(request)
     origin = request.headers.get("origin", "")
     allowed = _value(_env(request), "FRONTEND_ORIGIN")
-    if origin == allowed or origin.startswith("http://localhost:"):
+    # Production serves the frontend from this Worker, leaving FRONTEND_ORIGIN
+    # unset so that no cross-origin caller is granted access.
+    if origin and origin == allowed:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"

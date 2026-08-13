@@ -1,3 +1,6 @@
 REVIEWER_PASSWORD=replace-with-a-strong-reviewer-password
 ADMIN_PASSWORD=replace-with-a-different-admin-password
 SESSION_SECRET=replace-with-at-least-32-random-characters
+# Only needed locally, where Vite serves the frontend on a different port than
+# the Worker. Production serves both from one origin and leaves this unset.
+FRONTEND_ORIGIN=http://localhost:5173

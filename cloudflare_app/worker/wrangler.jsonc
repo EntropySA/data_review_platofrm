@@ -4,15 +4,26 @@
   "main": "src/entry.py",
   "compatibility_date": "2026-08-13",
   "compatibility_flags": ["python_workers"],
+  "assets": {
+    // The React build output. Served free of charge and without invoking the
+    // Worker, so only /api/* consumes Worker requests and CPU time.
+    "directory": "../frontend/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "review-desk",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "88d8d480-f2b6-430b-80fa-30d20968f376",
       "migrations_dir": "migrations"
     }
   ],
-  "vars": {
-    "FRONTEND_ORIGIN": "http://localhost:5173"
+  "observability": {
+    "enabled": true
   }
+  // FRONTEND_ORIGIN is deliberately not set here. In production the frontend is
+  // served by this same Worker, so browser requests are same-origin and need no
+  // CORS grant at all. Local development sets it in .dev.vars, where the Vite
+  // server runs on a different port.
 }

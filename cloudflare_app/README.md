@@ -1,9 +1,23 @@
 # Cloudflare deployment
 
-This is the Cloudflare-native replacement for the Streamlit application:
+**Live:** https://review-desk-api.entropy-data-review.workers.dev
 
-- `frontend/`: React/Vite static site for Cloudflare Pages.
-- `worker/`: FastAPI Python Worker with D1 persistence.
+| Resource | Value |
+| --- | --- |
+| Worker | `review-desk-api` |
+| D1 database | `review-desk` (`88d8d480-f2b6-430b-80fa-30d20968f376`, WEUR) |
+| Secrets | `REVIEWER_PASSWORD`, `ADMIN_PASSWORD`, `SESSION_SECRET` |
+
+This is the Cloudflare-native replacement for the Streamlit application. A single
+Worker serves both halves from one origin:
+
+- `frontend/`: React/Vite single-page app, uploaded as the Worker's static assets.
+- `worker/`: FastAPI Python Worker with D1 persistence, invoked only for `/api/*`.
+
+Requests for the interface are served straight from Cloudflare's asset storage
+without starting the Worker, so they cost nothing and consume no CPU time. Because
+both halves share an origin, the browser makes same-origin calls and no CORS grant
+is issued in production.
 - Excel files are generated in the admin's browser, avoiding Worker CPU usage.
 - JSON files are validated in the browser and uploaded in chunks of at most 200 records.
 
@@ -60,18 +74,29 @@ Create production secrets. Use distinct passwords and a random session secret of
 uv run pywrangler secret put REVIEWER_PASSWORD
 uv run pywrangler secret put ADMIN_PASSWORD
 uv run pywrangler secret put SESSION_SECRET
-uv run pywrangler deploy
 ```
 
-Copy the resulting Worker URL. Deploy the frontend:
+Build the interface, then deploy both halves together. The build must run first,
+because `wrangler.jsonc` uploads `frontend/dist` as the Worker's static assets:
 
 ```bash
-cd ../frontend
-VITE_API_URL='https://YOUR-WORKER.workers.dev' npm run build
-npx wrangler pages deploy dist --project-name review-desk
+cd ../frontend && npm install && npm run build
+cd ../worker && uv run pywrangler deploy
 ```
 
-Copy the resulting Pages URL into `FRONTEND_ORIGIN` in `worker/wrangler.jsonc`, then redeploy the Worker. This restricts browser API access to the deployed frontend.
+The printed `*.workers.dev` URL serves the interface and the API. Do not set
+`VITE_API_URL` when building for production; `frontend/.env.production` keeps it
+empty so the app calls `/api/*` on whichever origin served it, which also lets a
+custom domain work without a rebuild.
+
+## Redeploying
+
+Rebuild the frontend whenever it changes, then deploy:
+
+```bash
+cd cloudflare_app/frontend && npm run build
+cd ../worker && uv run pywrangler deploy
+```
 
 ## Verification
 

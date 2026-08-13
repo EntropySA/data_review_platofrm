@@ -11,6 +11,8 @@ dist/
 python_modules/
 .wrangler/
 .dev.vars
+.env
+.env.local
 .streamlit/secrets.toml
 data/*.db
 data/*.db-shm

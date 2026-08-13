@@ -1,4 +1,6 @@
-export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787";
+// Empty by default so production builds call the Worker that served this page.
+// Local development points it at the separate Worker port via .env.
+export const API_URL = import.meta.env.VITE_API_URL ?? "";
 
 export async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
