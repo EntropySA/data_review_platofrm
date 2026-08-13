@@ -1,0 +1,12 @@
+.DS_Store
+.pytest_cache/
+.pycache/
+__pycache__/
+*.py[cod]
+.venv/
+.streamlit/secrets.toml
+data/*.db
+data/*.db-shm
+data/*.db-wal
+template.json
+*.pyc

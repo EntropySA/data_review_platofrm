@@ -1,0 +1,12 @@
+services:
+  review-desk:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      REVIEWER_PASSWORD: "${REVIEWER_PASSWORD:?Set REVIEWER_PASSWORD}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}"
+      DATABASE_PATH: /app/data/reviews.db
+    volumes:
+      - ./data:/app/data
