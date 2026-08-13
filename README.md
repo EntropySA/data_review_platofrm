@@ -1,8 +1,10 @@
 # Review Desk
 
-> A Cloudflare-native React + FastAPI + D1 replacement is now available in
+> The Cloudflare-native React + FastAPI + D1 replacement is deployed and serving at
+> **https://review-desk-api.entropy-data-review.workers.dev** — see
 > [`cloudflare_app/`](cloudflare_app/README.md). The Streamlit implementation below
-> remains available during deployment validation.
+> remains available during deployment validation. The two do not share a database:
+> reviews recorded in `data/reviews.db` are not visible in the Cloudflare app.
 
 A password-protected Streamlit platform for concurrent review of JSON question-and-answer datasets. Reviewers receive exclusive 30-minute assignments, record Pass/Fail decisions, and provide mandatory notes for failures. Administrators can import batches, monitor progress, reset reviews, and export completed work to Excel.
 
@@ -23,7 +25,7 @@ The uploaded file must contain a root `data` array. Extra fields are ignored. Va
 }
 ```
 
-`id` must be an integer, `instruction` and `output` must be strings, and `input` must be an array of strings. Invalid records are skipped and reported. An exact file cannot be uploaded twice, but IDs may repeat across different files.
+`id` must be an integer, `instruction` and `output` must be strings, and `input` must be either a string or an array of strings. A single string is stored as a one-part question, so `"input": "Question text"` and `"input": ["Question text"]` are equivalent. Invalid records are skipped and reported. An exact file cannot be uploaded twice, but IDs may repeat across different files.
 
 ## Local setup
 

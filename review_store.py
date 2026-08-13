@@ -284,6 +284,10 @@ class ReviewStore:
             if message:
                 errors.append(ImportErrorDetail(row_number, message))
             else:
+                # A question may arrive as a bare string rather than a list of
+                # parts; store both shapes as a list so readers stay uniform.
+                if isinstance(record["input"], str):
+                    record = {**record, "input": [record["input"]]}
                 valid_records.append(record)
         return valid_records, errors
 
@@ -661,10 +665,11 @@ class ReviewStore:
             return "Field 'id' must be an integer."
         if not isinstance(record["instruction"], str):
             return "Field 'instruction' must be a string."
-        if not isinstance(record["input"], list) or not all(
-            isinstance(value, str) for value in record["input"]
+        if not isinstance(record["input"], (str, list)) or (
+            isinstance(record["input"], list)
+            and not all(isinstance(value, str) for value in record["input"])
         ):
-            return "Field 'input' must be an array of strings."
+            return "Field 'input' must be a string or an array of strings."
         if not isinstance(record["output"], str):
             return "Field 'output' must be a string."
         return None

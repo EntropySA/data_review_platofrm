@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -19,6 +19,12 @@ class QuestionRecord(BaseModel):
     instruction: str
     input: list[str]
     output: str
+
+    @field_validator("input", mode="before")
+    @classmethod
+    def _wrap_single_string(cls, value: object) -> object:
+        """Accept a question given as one string instead of a list of parts."""
+        return [value] if isinstance(value, str) else value
 
 
 class ImportStart(BaseModel):

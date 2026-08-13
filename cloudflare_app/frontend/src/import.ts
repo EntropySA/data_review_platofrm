@@ -13,10 +13,12 @@ export function validateDocument(document: unknown): ValidationResult {
     const record = value as Record<string, unknown>;
     if (!Number.isInteger(record.id)) return errors.push({ row, message: "id must be an integer." });
     if (typeof record.instruction !== "string") return errors.push({ row, message: "instruction must be a string." });
-    if (!Array.isArray(record.input) || !record.input.every((item) => typeof item === "string"))
-      return errors.push({ row, message: "input must be an array of strings." });
+    // A question may arrive as a bare string rather than a list of parts.
+    const input = typeof record.input === "string" ? [record.input] : record.input;
+    if (!Array.isArray(input) || !input.every((item) => typeof item === "string"))
+      return errors.push({ row, message: "input must be a string or an array of strings." });
     if (typeof record.output !== "string") return errors.push({ row, message: "output must be a string." });
-    valid.push({ id: record.id as number, instruction: record.instruction, input: record.input as string[], output: record.output });
+    valid.push({ id: record.id as number, instruction: record.instruction, input: input as string[], output: record.output });
   });
   return { valid, errors };
 }

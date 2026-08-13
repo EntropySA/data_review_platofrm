@@ -10,4 +10,20 @@ describe("JSON validation", () => {
     expect(result.valid).toEqual([{ id: 1, instruction: "أجب", input: ["سؤال"], output: "جواب" }]);
     expect(result.errors).toHaveLength(1);
   });
+
+  it("accepts a question given as a single string", () => {
+    const result = validateDocument({ data: [
+      { id: 1, instruction: "أجب", input: "سؤال واحد", output: "جواب" },
+    ] });
+    expect(result.errors).toHaveLength(0);
+    expect(result.valid).toEqual([{ id: 1, instruction: "أجب", input: ["سؤال واحد"], output: "جواب" }]);
+  });
+
+  it("still rejects an input that is neither a string nor a list of strings", () => {
+    const result = validateDocument({ data: [
+      { id: 1, instruction: "أجب", input: 5, output: "جواب" },
+    ] });
+    expect(result.valid).toHaveLength(0);
+    expect(result.errors).toHaveLength(1);
+  });
 });
