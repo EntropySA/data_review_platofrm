@@ -4,6 +4,13 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv-workers/
+node_modules/
+dist/
+*.tsbuildinfo
+python_modules/
+.wrangler/
+.dev.vars
 .streamlit/secrets.toml
 data/*.db
 data/*.db-shm

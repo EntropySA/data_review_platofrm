@@ -1,5 +1,9 @@
 # Review Desk
 
+> A Cloudflare-native React + FastAPI + D1 replacement is now available in
+> [`cloudflare_app/`](cloudflare_app/README.md). The Streamlit implementation below
+> remains available during deployment validation.
+
 A password-protected Streamlit platform for concurrent review of JSON question-and-answer datasets. Reviewers receive exclusive 30-minute assignments, record Pass/Fail decisions, and provide mandatory notes for failures. Administrators can import batches, monitor progress, reset reviews, and export completed work to Excel.
 
 ## JSON format

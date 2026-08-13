@@ -1,0 +1,53 @@
+from fastapi.testclient import TestClient
+
+from cloudflare_app.worker.src.api import app
+
+
+class Env:
+    REVIEWER_PASSWORD = "review-secret"
+    ADMIN_PASSWORD = "admin-secret"
+    SESSION_SECRET = "a-secure-signing-secret-with-32-characters"
+    FRONTEND_ORIGIN = "http://localhost:5173"
+
+
+class FakeStore:
+    async def claim(self, reviewer, session_id, exclude_id):
+        return {
+            "id": 7,
+            "source_id": "42",
+            "instruction": "أجب بدقة",
+            "input": ["ما الإجابة؟"],
+            "output": "الإجابة",
+        }
+
+    async def analytics(self):
+        return {"total": 3, "reviewed": 1, "assigned": 1, "pending": 1,
+                "passed": 1, "failed": 0, "by_reviewer": [], "over_time": []}
+
+
+def login(client, password, name=""):
+    response = client.post("/api/auth/login", json={"password": password,
+                                                     "reviewer_name": name})
+    assert response.status_code == 200
+    return response.json()["token"]
+
+
+def test_reviewer_logs_in_and_claims_rtl_question():
+    app.state.env = Env()
+    app.state.store = FakeStore()
+    with TestClient(app) as client:
+        token = login(client, "review-secret", "أمينة")
+        response = client.post("/api/reviewer/claim",
+                               headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json()["instruction"] == "أجب بدقة"
+
+
+def test_reviewer_cannot_open_admin_analytics():
+    app.state.env = Env()
+    app.state.store = FakeStore()
+    with TestClient(app) as client:
+        token = login(client, "review-secret", "Amina")
+        response = client.get("/api/admin/analytics",
+                              headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403

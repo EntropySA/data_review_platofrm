@@ -8,3 +8,6 @@ dependencies = [
     "pytest==8.4.2",
     "streamlit==1.49.1",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
