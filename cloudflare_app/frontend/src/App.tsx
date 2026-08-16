@@ -59,6 +59,47 @@ function Upload({token}:{token:string}) {
 function Analytics({token}:{token:string}){const [m,setM]=useState<Metrics>();useEffect(()=>{api<Metrics>("/api/admin/analytics",token).then(setM)},[token]);if(!m)return <p>Loading…</p>;return <><div className="metrics">{(["total","reviewed","pending","assigned","passed","failed"] as const).map(k=><section className="metric" key={k}><span>{k}</span><strong>{m[k]}</strong></section>)}</div><div className="grid"><Bars title="Reviews by reviewer" rows={m.by_reviewer.map(x=>[x.reviewer,x.reviews])}/><Bars title="Reviews over time" rows={m.over_time.map(x=>[x.date,x.reviews])}/></div></>}
 function Bars({title,rows}:{title:string;rows:[string,number][]}){const max=Math.max(1,...rows.map(x=>x[1]));return <section className="card"><h2>{title}</h2>{rows.length?rows.map(([label,value])=><div className="bar" key={label}><span dir="auto">{label}</span><i><b style={{width:`${value/max*100}%`}}/></i><strong>{value}</strong></div>):<p>No completed reviews yet.</p>}</section>}
 
-function Reviews({token}:{token:string}){const [items,setItems]=useState<any[]>([]);const [search,setSearch]=useState("");const load=()=>api<any[]>(`/api/admin/reviews?search=${encodeURIComponent(search)}`,token).then(setItems);useEffect(()=>{void load()},[token]);return <section className="card"><h2>Review management</h2><div className="actions"><input placeholder="Search" value={search} onChange={e=>setSearch(e.target.value)}/><button onClick={load}>Search</button></div>{items.map(x=><article key={x.review_id}><strong>{x.decision} · {x.reviewer} · {x.source_id}</strong><div dir="auto">{x.notes||"—"}</div><button className="danger" onClick={async()=>{if(confirm("Return this question to pending?")){await api("/api/admin/reviews/reset",token,{method:"POST",body:JSON.stringify({review_id:x.review_id})});load()}}}>Reset</button></article>)}</section>}
+type ReviewRow = {review_id:number; source_id:string; instruction:string; question:string; output:string;
+  decision:"Pass"|"Fail"; notes:string; reviewer:string; reviewed_at:string};
+
+function Reviews({token}:{token:string}){
+  const [items,setItems]=useState<ReviewRow[]>([]); const [search,setSearch]=useState("");
+  const [filter,setFilter]=useState<"All"|"Pass"|"Fail">("All"); const [status,setStatus]=useState("Loading…");
+  const load=useCallback(async(term:string)=>{setStatus("Loading…");try{
+    setItems(await api<ReviewRow[]>(`/api/admin/reviews?search=${encodeURIComponent(term)}`,token));setStatus("");
+  }catch(e){setStatus((e as Error).message)}},[token]);
+  useEffect(()=>{void load("")},[load]);
+  const shown=items.filter(x=>filter==="All"||x.decision===filter);
+  const reset=async(row:ReviewRow)=>{
+    if(!confirm(`Return item ${row.source_id} to the pending pool? The ${row.decision} decision by ${row.reviewer} is removed and another reviewer will see the question again.`))return;
+    try{await api("/api/admin/reviews/reset",token,{method:"POST",body:JSON.stringify({review_id:row.review_id})});await load(search)}
+    catch(e){setStatus((e as Error).message)}};
+  return <section className="card"><h2>Review management</h2>
+    <p className="muted">Read the question and the reviewed answer together to judge whether a decision should stand.</p>
+    <div className="actions"><input placeholder="Search question, output, notes or reviewer" value={search}
+      onChange={e=>setSearch(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")void load(search)}} />
+      <button onClick={()=>void load(search)}>Search</button></div>
+    <nav>{(["All","Pass","Fail"] as const).map(x=><button key={x} className={filter===x?"":"secondary"} onClick={()=>setFilter(x)}>{x}</button>)}</nav>
+    <p className="muted">{status||`${shown.length} review${shown.length===1?"":"s"} shown`}</p>
+    {shown.map(row=><article key={row.review_id}>
+      <div className="review-head">
+        <span className={row.decision==="Fail"?"tag tag-fail":"tag tag-pass"}>{row.decision}</span>
+        <span><strong>{row.reviewer}</strong></span>
+        <span className="muted">Source item ID: {row.source_id}</span>
+        <span className="muted">{row.reviewed_at.slice(0,16).replace("T"," ")}</span>
+      </div>
+      <Field label="Instruction" text={row.instruction}/>
+      <Field label="Question" text={row.question}/>
+      <Field label="Reviewed output" text={row.output}/>
+      {row.decision==="Fail"&&<Field label="Failure notes" text={row.notes}/>}
+      <div><button className="danger reset" onClick={()=>reset(row)}>Reset to pending</button></div>
+    </article>)}
+    {!shown.length&&!status&&<p className="muted">No reviews match.</p>}
+  </section>;
+}
+
+function Field({label,text}:{label:string;text:string}){
+  return <div className="field"><span className="field-label">{label}</span><div className="content clamp" dir="auto">{text||"—"}</div></div>;
+}
 
 function Export({token}:{token:string}){const run=async()=>{const [{default:ExcelJS},rows]=await Promise.all([import("exceljs"),api<any[]>("/api/admin/export",token)]);const book=new ExcelJS.Workbook();const sheet=book.addWorksheet("Reviewed Data");sheet.columns=["instruction","question","output","pass/fail","notes"].map(key=>({header:key,key,width:36}));rows.forEach(row=>sheet.addRow(row));sheet.getRow(1).font={bold:true,color:{argb:"FFFFFFFF"}};sheet.getRow(1).fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF164E63"}};sheet.eachRow(row=>row.alignment={wrapText:true,vertical:"top"});const data=await book.xlsx.writeBuffer();const url=URL.createObjectURL(new Blob([data],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));const a=document.createElement("a");a.href=url;a.download="reviewed_data.xlsx";a.click();URL.revokeObjectURL(url)};return <section className="card"><h2>Export reviewed data</h2><p>Generate the five-column XLSX file locally in this browser.</p><button onClick={run}>Download reviewed_data.xlsx</button></section>}
