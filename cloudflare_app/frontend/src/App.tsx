@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { QuestionRecord, validateDocument } from "./import";
 import { containsJson, extractJson } from "./jsonText";
+import { asToolSchema, ToolFunction } from "./toolSchema";
 
 type Session = { token: string; role: "reviewer" | "admin"; name: string };
 type Question = QuestionRecord & { source_id: string };
@@ -36,22 +37,23 @@ function Reviewer({session}:{session:Session}) {
   const skip=async()=>{const id=question!.id;await api(`/api/reviewer/skip/${id}`,session.token,{method:"POST"});claim(id)};
   return <><h1>Question review</h1><p className="muted">Read all sections, then record your decision.</p>{error&&<p className="error">{error}</p>}
     {question===undefined?<p>Loading…</p>:question===null?<section className="card"><h2>No questions are available</h2><button onClick={()=>claim()}>Check again</button></section>:<>
-      <small>Source item ID: {question.source_id}</small><Content title="Instruction" text={question.instruction}/><Content title="Question" text={question.input.join("\n\n")}/><Content title="Output" text={question.output}/>
+      <small>Source item ID: {question.source_id}</small><Content title="Instruction" text={question.instruction} tools/><Content title="Question" text={question.input.join("\n\n")}/><Content title="Output" text={question.output}/>
       {fail?<section className="card"><label>Failure notes *<textarea dir="auto" value={notes} onChange={e=>setNotes(e.target.value)} /></label><div className="actions"><button onClick={()=>submit("Fail")}>Submit Fail & Next</button><button className="secondary" onClick={()=>setFail(false)}>Cancel</button></div></section>
       :<div className="actions"><button onClick={()=>submit("Pass")}>Pass & Next</button><button className="danger" onClick={()=>setFail(true)}>Fail</button><button className="secondary" onClick={skip}>Skip</button></div>}</>}
   </>;
 }
 
-function Content({title,text}:{title:string;text:string}){
-  return <section className="card"><h2>{title}</h2><Rich text={text}/></section>;
+function Content({title,text,tools}:{title:string;text:string;tools?:boolean}){
+  return <section className="card"><h2>{title}</h2><Rich text={text} tools={tools}/></section>;
 }
 
 // Instructions and answers often carry JSON inside ordinary prose, which is
 // slow to read unformatted. Format only what actually parses, leave the rest
 // exactly as written, and always offer the original back: a reviewer judging
 // an answer must be able to see the characters the model really produced.
-function Rich({text,className=""}:{text:string;className?:string}){
-  const segments=useMemo(()=>extractJson(text),[text]);
+function Rich({text,className="",tools=false}:{text:string;className?:string;tools?:boolean}){
+  const segments=useMemo(()=>extractJson(text).map(s=>
+    ({...s,functions:tools&&s.json!==undefined?asToolSchema(s.json):undefined})),[text,tools]);
   const [raw,setRaw]=useState(false);
   if(!text) return <div className={`content ${className}`}>—</div>;
   if(!containsJson(segments)) return <div className={`content ${className}`} dir="auto">{text}</div>;
@@ -60,9 +62,47 @@ function Rich({text,className=""}:{text:string;className?:string}){
     <div className={`content ${className}`} dir="auto">
       {raw?text:segments.map((s,i)=>s.json===undefined
         ? <span key={i}>{s.text}</span>
-        : <pre className="json" dir="ltr" key={i}>{highlight(JSON.stringify(s.json,null,2))}</pre>)}
+        : s.functions
+          ? <ToolList key={i} functions={s.functions}/>
+          : <pre className="json" dir="ltr" key={i}>{highlight(JSON.stringify(s.json,null,2))}</pre>)}
     </div>
   </>;
+}
+
+// A tool schema is a list of independent definitions, so it is shown as one:
+// each row collapsed to the name and its parameter counts, opening to the
+// description and parameters. The raw toggle above still returns the original,
+// which matters because a summary can only show the fields it knows about.
+function ToolList({functions}:{functions:ToolFunction[]}){
+  const [open,setOpen]=useState<Record<number,boolean>>({});
+  const allOpen=functions.every((_,i)=>open[i]);
+  return <div className="tools" dir="ltr">
+    <div className="tools-head">
+      <span className="muted">{functions.length} function{functions.length===1?"":"s"} declared</span>
+      <button className="secondary" onClick={()=>setOpen(allOpen?{}:Object.fromEntries(functions.map((_,i)=>[i,true])))}>
+        {allOpen?"Collapse all":"Expand all"}</button>
+    </div>
+    {functions.map((fn,i)=><details className="tool" key={i} open={!!open[i]}
+      onToggle={e=>{const el=e.currentTarget as HTMLDetailsElement;setOpen(prev=>({...prev,[i]:el.open}))}}>
+      <summary>
+        <code className="tool-name">{fn.name||<em className="muted">unnamed</em>}</code>
+        <span className="muted tool-meta">{fn.params.length} param{fn.params.length===1?"":"s"}
+          {fn.required.length?` · ${fn.required.length} required`:""}</span>
+      </summary>
+      <div className="tool-body">
+        {fn.description?<p dir="auto">{fn.description}</p>:<p className="muted">No description given.</p>}
+        {fn.params.length?<ul className="params">{fn.params.map((p,j)=><li key={j}>
+          <div className="param-head">
+            <code>{p.name||<em className="muted">unnamed</em>}</code>
+            {p.type&&<span className="type">{p.type}</span>}
+            {p.required&&<span className="tag tag-warn">required</span>}
+          </div>
+          {p.description&&<div className="muted" dir="auto">{p.description}</div>}
+        </li>)}</ul>:<p className="muted">No parameters declared.</p>}
+        {fn.missingRequired.length>0&&<p className="error">Listed as required but never declared as a property: {fn.missingRequired.join(", ")}</p>}
+      </div>
+    </details>)}
+  </div>;
 }
 
 // The block is rendered left-to-right whatever the surrounding language, and
@@ -214,7 +254,7 @@ function Reviews({token}:{token:string}){
         <span className="muted">Source item ID: {row.source_id}</span>
         <span className="muted">{row.reviewed_at.slice(0,16).replace("T"," ")}</span>
       </div>
-      <Field label="Instruction" text={row.instruction}/>
+      <Field label="Instruction" text={row.instruction} tools/>
       <Field label="Question" text={row.question}/>
       <Field label="Reviewed output" text={row.output}/>
       {row.decision==="Fail"&&<Field label="Failure notes" text={row.notes}/>}
@@ -224,8 +264,8 @@ function Reviews({token}:{token:string}){
   </section>;
 }
 
-function Field({label,text}:{label:string;text:string}){
-  return <div className="field"><span className="field-label">{label}</span><Rich text={text} className="clamp"/></div>;
+function Field({label,text,tools}:{label:string;text:string;tools?:boolean}){
+  return <div className="field"><span className="field-label">{label}</span><Rich text={text} className="clamp" tools={tools}/></div>;
 }
 
 function Export({token}:{token:string}){const run=async()=>{const [{default:ExcelJS},rows]=await Promise.all([import("exceljs"),api<any[]>("/api/admin/export",token)]);const book=new ExcelJS.Workbook();const sheet=book.addWorksheet("Reviewed Data");sheet.columns=["instruction","question","output","pass/fail","notes"].map(key=>({header:key,key,width:36}));rows.forEach(row=>sheet.addRow(row));sheet.getRow(1).font={bold:true,color:{argb:"FFFFFFFF"}};sheet.getRow(1).fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF164E63"}};sheet.eachRow(row=>row.alignment={wrapText:true,vertical:"top"});const data=await book.xlsx.writeBuffer();const url=URL.createObjectURL(new Blob([data],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));const a=document.createElement("a");a.href=url;a.download="reviewed_data.xlsx";a.click();URL.revokeObjectURL(url)};return <section className="card"><h2>Export reviewed data</h2><p>Generate the five-column XLSX file locally in this browser.</p><button onClick={run}>Download reviewed_data.xlsx</button></section>}
