@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { QuestionRecord, validateDocument } from "./import";
+import { containsJson, extractJson } from "./jsonText";
 
 type Session = { token: string; role: "reviewer" | "admin"; name: string };
 type Question = QuestionRecord & { source_id: string };
@@ -41,7 +42,46 @@ function Reviewer({session}:{session:Session}) {
   </>;
 }
 
-function Content({title,text}:{title:string;text:string}){return <section className="card"><h2>{title}</h2><div className="content" dir="auto">{text||"—"}</div></section>}
+function Content({title,text}:{title:string;text:string}){
+  return <section className="card"><h2>{title}</h2><Rich text={text}/></section>;
+}
+
+// Instructions and answers often carry JSON inside ordinary prose, which is
+// slow to read unformatted. Format only what actually parses, leave the rest
+// exactly as written, and always offer the original back: a reviewer judging
+// an answer must be able to see the characters the model really produced.
+function Rich({text,className=""}:{text:string;className?:string}){
+  const segments=useMemo(()=>extractJson(text),[text]);
+  const [raw,setRaw]=useState(false);
+  if(!text) return <div className={`content ${className}`}>—</div>;
+  if(!containsJson(segments)) return <div className={`content ${className}`} dir="auto">{text}</div>;
+  return <>
+    <div className="row"><button className="secondary" onClick={()=>setRaw(r=>!r)}>{raw?"Show raw text":"Show formatted"}</button></div>
+    <div className={`content ${className}`} dir="auto">
+      {raw?text:segments.map((s,i)=>s.json===undefined
+        ? <span key={i}>{s.text}</span>
+        : <pre className="json" dir="ltr" key={i}>{highlight(JSON.stringify(s.json,null,2))}</pre>)}
+    </div>
+  </>;
+}
+
+// The block is rendered left-to-right whatever the surrounding language, and
+// each string is bidi-isolated so an Arabic value cannot reorder the braces,
+// commas and quotes around it.
+function highlight(source:string):React.ReactNode[]{
+  const token=/("(?:\\.|[^"\\])*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(true|false|null)/g;
+  const out:React.ReactNode[]=[]; let last=0,key=0,m:RegExpExecArray|null;
+  while((m=token.exec(source))){
+    if(m.index>last) out.push(source.slice(last,m.index));
+    if(m[1]!==undefined&&m[2]!==undefined){out.push(<span className="jk" key={key++}>{m[1]}</span>);out.push(m[2])}
+    else if(m[1]!==undefined) out.push(<span className="js" key={key++}>{m[1]}</span>);
+    else if(m[3]!==undefined) out.push(<span className="jn" key={key++}>{m[3]}</span>);
+    else out.push(<span className="jb" key={key++}>{m[4]}</span>);
+    last=token.lastIndex;
+  }
+  if(last<source.length) out.push(source.slice(last));
+  return out;
+}
 
 function Admin({session}:{session:Session}) {
   const [tab,setTab]=useState("upload");
@@ -185,7 +225,7 @@ function Reviews({token}:{token:string}){
 }
 
 function Field({label,text}:{label:string;text:string}){
-  return <div className="field"><span className="field-label">{label}</span><div className="content clamp" dir="auto">{text||"—"}</div></div>;
+  return <div className="field"><span className="field-label">{label}</span><Rich text={text} className="clamp"/></div>;
 }
 
 function Export({token}:{token:string}){const run=async()=>{const [{default:ExcelJS},rows]=await Promise.all([import("exceljs"),api<any[]>("/api/admin/export",token)]);const book=new ExcelJS.Workbook();const sheet=book.addWorksheet("Reviewed Data");sheet.columns=["instruction","question","output","pass/fail","notes"].map(key=>({header:key,key,width:36}));rows.forEach(row=>sheet.addRow(row));sheet.getRow(1).font={bold:true,color:{argb:"FFFFFFFF"}};sheet.getRow(1).fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF164E63"}};sheet.eachRow(row=>row.alignment={wrapText:true,vertical:"top"});const data=await book.xlsx.writeBuffer();const url=URL.createObjectURL(new Blob([data],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));const a=document.createElement("a");a.href=url;a.download="reviewed_data.xlsx";a.click();URL.revokeObjectURL(url)};return <section className="card"><h2>Export reviewed data</h2><p>Generate the five-column XLSX file locally in this browser.</p><button onClick={run}>Download reviewed_data.xlsx</button></section>}

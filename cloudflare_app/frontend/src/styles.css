@@ -76,6 +76,16 @@ article:last-child{padding-bottom:0}
 .field{display:grid;gap:var(--s1)}
 .field-label{font-size:.75rem;font-weight:700;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em}
 .clamp{max-height:11rem;overflow:auto;background:var(--bg);border:1px solid #e6edf2;border-radius:8px;padding:var(--s3)}
+
+/* Formatted JSON stays left-to-right inside Arabic prose; isolating each
+   string keeps braces, commas and quotes in place around an RTL value. */
+.json{direction:ltr;text-align:left;white-space:pre;overflow-x:auto;margin:var(--s2) 0;padding:var(--s3);
+  background:#f4f7fa;border:1px solid #e2e9f0;border-radius:8px;line-height:1.6;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85rem}
+.json .jk{color:#0f5c55;font-weight:600}
+.json .js{color:#8a5300;unicode-bidi:isolate}
+.json .jn{color:#1d4ed8}
+.json .jb{color:var(--danger)}
 button.reset{min-width:12.5rem}
 
 @media(max-width:768px){
