@@ -45,6 +45,9 @@ textarea{min-height:8rem}
 .error{color:#a61b1b}
 
 /* 12px keeps adjacent controls clear of the 8px minimum touch gap. */
+.row{display:flex;gap:var(--s3);flex-wrap:wrap}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:disabled:hover{opacity:.45}
 .actions,nav,.toolbar{display:flex;gap:var(--s3);flex-wrap:wrap;margin-bottom:var(--s4)}
 .actions>*{flex:1}
 .toolbar>input{flex:1;min-width:12rem}

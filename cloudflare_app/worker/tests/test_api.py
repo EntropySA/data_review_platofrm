@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from cloudflare_app.worker.src.api import app
+from cloudflare_app.worker.src.store import StoreConflict
 
 
 class Env:
@@ -26,7 +27,13 @@ class FakeStore:
 
     async def list_batches(self):
         return [{"id": 1, "filename": "questions.json", "uploaded_at": "2026-08-17T00:00:00+00:00",
-                 "imported_count": 500, "skipped_count": 0, "status": "uploading", "stored": 320}]
+                 "imported_count": 500, "skipped_count": 0, "status": "uploading",
+                 "stored": 320, "reviewed": 0}]
+
+    async def delete_batch(self, batch_id, actor):
+        if batch_id == 2:
+            raise StoreConflict("4 question(s) in this upload have already been reviewed.")
+        return {"deleted_questions": 320}
 
 
 def login(client, password, name=""):
@@ -58,6 +65,38 @@ def test_admin_sees_an_unfinished_upload_and_what_it_holds():
     batch = response.json()[0]
     assert batch["status"] == "uploading"
     assert batch["stored"] == 320
+
+
+def test_admin_deletes_an_upload_to_free_the_file_for_reupload():
+    app.state.env = Env()
+    app.state.store = FakeStore()
+    with TestClient(app) as client:
+        token = login(client, "admin-secret")
+        response = client.delete("/api/admin/batches/1",
+                                 headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json()["deleted_questions"] == 320
+
+
+def test_deleting_an_upload_holding_reviews_is_refused():
+    app.state.env = Env()
+    app.state.store = FakeStore()
+    with TestClient(app) as client:
+        token = login(client, "admin-secret")
+        response = client.delete("/api/admin/batches/2",
+                                 headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 409
+    assert "already been reviewed" in response.json()["detail"]
+
+
+def test_reviewer_cannot_delete_an_upload():
+    app.state.env = Env()
+    app.state.store = FakeStore()
+    with TestClient(app) as client:
+        token = login(client, "review-secret", "Amina")
+        response = client.delete("/api/admin/batches/1",
+                                 headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
 
 
 def test_reviewer_cannot_open_admin_batches():

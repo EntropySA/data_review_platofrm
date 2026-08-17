@@ -50,7 +50,7 @@ function Admin({session}:{session:Session}) {
 }
 
 type Batch = {id:number; filename:string; uploaded_at:string; imported_count:number;
-  skipped_count:number; status:"uploading"|"ready"; stored:number};
+  skipped_count:number; status:"uploading"|"ready"; stored:number; reviewed:number};
 
 function useBatches(token:string){
   const [batches,setBatches]=useState<Batch[]>([]);
@@ -88,6 +88,12 @@ function Upload({token}:{token:string}) {
     try{await api(`/api/admin/imports/${b.id}/finish`,token,{method:"POST"});setStatus(`${b.filename} completed.`)}
     catch(e){setStatus((e as Error).message)}finally{void reload()}
   };
+  const remove=async(b:Batch)=>{
+    if(!confirm(`Delete ${b.filename} and the ${b.stored} question(s) stored for it?\n\nThis cannot be undone. Afterwards the file can be uploaded again from scratch.`))return;
+    try{const r=await api<{deleted_questions:number}>(`/api/admin/batches/${b.id}`,token,{method:"DELETE"});
+      setStatus(`Deleted ${b.filename} and ${r.deleted_questions} question(s). You can upload the file again now.`)}
+    catch(e){setStatus((e as Error).message)}finally{void reload()}
+  };
   const stuck=batches.filter(b=>b.status!=="ready");
   return <>
     <section className="card"><h2>Upload questions</h2>
@@ -106,8 +112,14 @@ function Upload({token}:{token:string}) {
           <strong dir="auto">{b.filename}</strong>
           <span className="muted">{b.uploaded_at.slice(0,16).replace("T"," ")}</span>
         </div>
-        <div className="muted">{b.stored} question{b.stored===1?"":"s"} stored{b.skipped_count?`, ${b.skipped_count} row(s) rejected`:""}</div>
-        {b.status!=="ready"&&<div><button onClick={()=>complete(b)}>Complete import</button></div>}
+        <div className="muted">{b.stored} question{b.stored===1?"":"s"} stored
+          {b.skipped_count?`, ${b.skipped_count} row(s) rejected`:""}
+          {b.reviewed?`, ${b.reviewed} already reviewed`:""}</div>
+        <div className="row">
+          {b.status!=="ready"&&<button onClick={()=>complete(b)}>Complete import</button>}
+          <button className="danger" disabled={b.reviewed>0} onClick={()=>remove(b)}>Delete upload</button>
+        </div>
+        {b.reviewed>0&&<p className="muted">This upload cannot be deleted while {b.reviewed} of its question{b.reviewed===1?" carries a review":"s carry reviews"}. Reset {b.reviewed===1?"it":"them"} under Reviews first.</p>}
       </article>)}
     </section>
   </>;

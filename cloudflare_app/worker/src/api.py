@@ -129,6 +129,12 @@ async def batches(request: Request):
     return await _store(request).list_batches()
 
 
+@app.delete("/api/admin/batches/{batch_id}")
+async def delete_batch(batch_id: int, request: Request):
+    identity = _identity(request, "admin")
+    return await _store(request).delete_batch(batch_id, identity.name)
+
+
 @app.get("/api/admin/analytics")
 async def analytics(request: Request):
     _identity(request, "admin")

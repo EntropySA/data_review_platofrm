@@ -88,11 +88,54 @@ class D1ReviewStore:
         """
         result = await self.db.prepare(
             """SELECT b.id,b.filename,b.uploaded_at,b.imported_count,b.skipped_count,
-               b.status,COUNT(q.id) stored
+               b.status,COUNT(q.id) stored,
+               SUM(CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END) reviewed
                FROM upload_batches b LEFT JOIN questions q ON q.batch_id=b.id
+               LEFT JOIN reviews r ON r.question_id=q.id
                GROUP BY b.id ORDER BY b.id DESC"""
         ).all()
-        return _rows(result.results)
+        return [{**row, "reviewed": int(row["reviewed"] or 0)} for row in _rows(result.results)]
+
+    async def delete_batch(self, batch_id: int, actor: str) -> dict:
+        """Remove an upload and its questions so the file can be sent again.
+
+        Refused once any of its questions carry a review, because that would
+        discard a reviewer's decision as a side effect of tidying up an import.
+        The file hash is released, which is the point: it is what otherwise
+        blocks re-uploading a file whose first attempt did not complete.
+        """
+        batch = _row(await self.db.prepare(
+            "SELECT * FROM upload_batches WHERE id=?1"
+        ).bind(batch_id).first())
+        if not batch:
+            raise StoreConflict("This upload no longer exists.")
+        counts = _row(await self.db.prepare(
+            """SELECT COUNT(q.id) stored,
+               SUM(CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END) reviewed
+               FROM questions q LEFT JOIN reviews r ON r.question_id=q.id
+               WHERE q.batch_id=?1"""
+        ).bind(batch_id).first()) or {}
+        reviewed = int(counts.get("reviewed") or 0)
+        if reviewed:
+            raise StoreConflict(
+                f"{reviewed} question(s) in this upload have already been reviewed. "
+                "Reset those reviews first if you really intend to remove it."
+            )
+        stored = int(counts.get("stored") or 0)
+        await self.db.batch([
+            self.db.prepare(
+                """INSERT INTO audit_events(event_type,actor,details_json,created_at)
+                   VALUES('batch_deleted',?1,?2,?3)"""
+            ).bind(actor, json.dumps({**batch, "deleted_questions": stored},
+                                     ensure_ascii=False), _now().isoformat()),
+            self.db.prepare(
+                "DELETE FROM assignments WHERE question_id IN "
+                "(SELECT id FROM questions WHERE batch_id=?1)"
+            ).bind(batch_id),
+            self.db.prepare("DELETE FROM questions WHERE batch_id=?1").bind(batch_id),
+            self.db.prepare("DELETE FROM upload_batches WHERE id=?1").bind(batch_id),
+        ])
+        return {"deleted_questions": stored}
 
     async def finish_import(self, batch_id: int) -> None:
         result = await self.db.prepare(
