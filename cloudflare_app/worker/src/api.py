@@ -123,6 +123,12 @@ async def finish_import(batch_id: int, request: Request):
     return {"ok": True}
 
 
+@app.get("/api/admin/batches")
+async def batches(request: Request):
+    _identity(request, "admin")
+    return await _store(request).list_batches()
+
+
 @app.get("/api/admin/analytics")
 async def analytics(request: Request):
     _identity(request, "admin")

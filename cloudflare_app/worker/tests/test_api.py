@@ -24,6 +24,10 @@ class FakeStore:
         return {"total": 3, "reviewed": 1, "assigned": 1, "pending": 1,
                 "passed": 1, "failed": 0, "by_reviewer": [], "over_time": []}
 
+    async def list_batches(self):
+        return [{"id": 1, "filename": "questions.json", "uploaded_at": "2026-08-17T00:00:00+00:00",
+                 "imported_count": 500, "skipped_count": 0, "status": "uploading", "stored": 320}]
+
 
 def login(client, password, name=""):
     response = client.post("/api/auth/login", json={"password": password,
@@ -41,6 +45,29 @@ def test_reviewer_logs_in_and_claims_rtl_question():
                                headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.json()["instruction"] == "أجب بدقة"
+
+
+def test_admin_sees_an_unfinished_upload_and_what_it_holds():
+    app.state.env = Env()
+    app.state.store = FakeStore()
+    with TestClient(app) as client:
+        token = login(client, "admin-secret")
+        response = client.get("/api/admin/batches",
+                              headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    batch = response.json()[0]
+    assert batch["status"] == "uploading"
+    assert batch["stored"] == 320
+
+
+def test_reviewer_cannot_open_admin_batches():
+    app.state.env = Env()
+    app.state.store = FakeStore()
+    with TestClient(app) as client:
+        token = login(client, "review-secret", "Amina")
+        response = client.get("/api/admin/batches",
+                              headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
 
 
 def test_reviewer_cannot_open_admin_analytics():

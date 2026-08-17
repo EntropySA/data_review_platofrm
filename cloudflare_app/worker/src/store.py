@@ -79,6 +79,21 @@ class D1ReviewStore:
         await self.db.batch(statements)
         return {"imported": len(records), "skipped": skipped_count}
 
+    async def list_batches(self) -> list[dict]:
+        """Metadata for every upload, including how many questions really landed.
+
+        An import that never reached finish_import leaves its batch 'uploading',
+        and analytics and claim both ignore those questions, so the stored count
+        is reported separately from the count the importer claimed to send.
+        """
+        result = await self.db.prepare(
+            """SELECT b.id,b.filename,b.uploaded_at,b.imported_count,b.skipped_count,
+               b.status,COUNT(q.id) stored
+               FROM upload_batches b LEFT JOIN questions q ON q.batch_id=b.id
+               GROUP BY b.id ORDER BY b.id DESC"""
+        ).all()
+        return _rows(result.results)
+
     async def finish_import(self, batch_id: int) -> None:
         result = await self.db.prepare(
             "UPDATE upload_batches SET status='ready' WHERE id=?1 AND status='uploading'"
