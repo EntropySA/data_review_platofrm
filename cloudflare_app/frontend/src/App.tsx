@@ -49,14 +49,88 @@ function Admin({session}:{session:Session}) {
     {tab==="upload"&&<Upload token={session.token}/>} {tab==="analytics"&&<Analytics token={session.token}/>} {tab==="reviews"&&<Reviews token={session.token}/>} {tab==="export"&&<Export token={session.token}/>}</>;
 }
 
-function Upload({token}:{token:string}) {
-  const [status,setStatus]=useState(""); const [errors,setErrors]=useState<{row:number;message:string}[]>([]);
-  const upload=async(file:File)=>{try{const text=await file.text();const parsed=validateDocument(JSON.parse(text));setErrors(parsed.errors);const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text)))).map(x=>x.toString(16).padStart(2,"0")).join("");
-    const start=await api<{batch_id:number}>("/api/admin/imports",token,{method:"POST",body:JSON.stringify({filename:file.name,file_hash:hash})});for(let i=0;i<parsed.valid.length;i+=200){setStatus(`Uploading ${Math.min(i+200,parsed.valid.length)} / ${parsed.valid.length}`);await api(`/api/admin/imports/${start.batch_id}/records`,token,{method:"POST",body:JSON.stringify({records:parsed.valid.slice(i,i+200),skipped_count:i===0?parsed.errors.length:0})})}await api(`/api/admin/imports/${start.batch_id}/finish`,token,{method:"POST"});setStatus(`Imported ${parsed.valid.length}; skipped ${parsed.errors.length}.`)}catch(e){setStatus((e as Error).message)}};
-  return <section className="card"><h2>Upload questions</h2><input type="file" accept="application/json,.json" onChange={e=>e.target.files?.[0]&&upload(e.target.files[0])}/><p>{status}</p>{errors.slice(0,100).map(e=><p className="error" key={e.row}>Row {e.row}: {e.message}</p>)}</section>;
+type Batch = {id:number; filename:string; uploaded_at:string; imported_count:number;
+  skipped_count:number; status:"uploading"|"ready"; stored:number};
+
+function useBatches(token:string){
+  const [batches,setBatches]=useState<Batch[]>([]);
+  const reload=useCallback(async()=>{try{setBatches(await api<Batch[]>("/api/admin/batches",token))}catch{/* advisory only */}},[token]);
+  useEffect(()=>{void reload()},[reload]);
+  return {batches,reload};
 }
 
-function Analytics({token}:{token:string}){const [m,setM]=useState<Metrics>();useEffect(()=>{api<Metrics>("/api/admin/analytics",token).then(setM)},[token]);if(!m)return <p>Loading…</p>;return <><div className="metrics">{(["total","reviewed","pending","assigned","passed","failed"] as const).map(k=><section className="metric" key={k}><span>{k}</span><strong>{m[k]}</strong></section>)}</div><div className="grid"><Bars title="Reviews by reviewer" rows={m.by_reviewer.map(x=>[x.reviewer,x.reviews])}/><Bars title="Reviews over time" rows={m.over_time.map(x=>[x.date,x.reviews])}/></div></>}
+function Upload({token}:{token:string}) {
+  const [status,setStatus]=useState(""); const [errors,setErrors]=useState<{row:number;message:string}[]>([]);
+  const {batches,reload}=useBatches(token);
+  const upload=async(file:File)=>{
+    setErrors([]); setStatus("Reading file…"); let started=false;
+    try{
+      const text=await file.text();
+      const parsed=validateDocument(JSON.parse(text));
+      setErrors(parsed.errors);
+      if(!parsed.valid.length){setStatus(`No valid records found; ${parsed.errors.length} row(s) rejected. Nothing was uploaded.`);return}
+      const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text)))).map(x=>x.toString(16).padStart(2,"0")).join("");
+      const start=await api<{batch_id:number}>("/api/admin/imports",token,{method:"POST",body:JSON.stringify({filename:file.name,file_hash:hash})});
+      started=true; let sent=0;
+      for(let i=0;i<parsed.valid.length;i+=200){
+        const chunk=parsed.valid.slice(i,i+200);
+        await api(`/api/admin/imports/${start.batch_id}/records`,token,{method:"POST",body:JSON.stringify({records:chunk,skipped_count:i===0?parsed.errors.length:0})});
+        sent+=chunk.length; setStatus(`Uploading ${sent} / ${parsed.valid.length}…`);
+      }
+      await api(`/api/admin/imports/${start.batch_id}/finish`,token,{method:"POST"});
+      setStatus(`Imported ${parsed.valid.length}; skipped ${parsed.errors.length}.`);
+    }catch(e){
+      setStatus(`${(e as Error).message}${started?" The import stopped partway, so this file's questions are not yet available. See Uploaded files below.":""}`);
+    }finally{void reload()}
+  };
+  const complete=async(b:Batch)=>{
+    if(!confirm(`Release the ${b.stored} question(s) already stored for ${b.filename}?\n\nRecords that never uploaded will not be added, and this file cannot be uploaded again afterwards.`))return;
+    try{await api(`/api/admin/imports/${b.id}/finish`,token,{method:"POST"});setStatus(`${b.filename} completed.`)}
+    catch(e){setStatus((e as Error).message)}finally{void reload()}
+  };
+  const stuck=batches.filter(b=>b.status!=="ready");
+  return <>
+    <section className="card"><h2>Upload questions</h2>
+      <input type="file" accept="application/json,.json" onChange={e=>e.target.files?.[0]&&upload(e.target.files[0])}/>
+      <p>{status}</p>
+      {errors.length>0&&<p className="muted">{errors.length} row(s) rejected{errors.length>100?"; first 100 shown":""}.</p>}
+      {errors.slice(0,100).map(e=><p className="error" key={e.row}>Row {e.row}: {e.message}</p>)}
+    </section>
+    <section className="card"><h2>Uploaded files</h2>
+      <p className="muted">Only questions from a completed import are counted in analytics and offered to reviewers.</p>
+      {stuck.length>0&&<p className="error">{stuck.length} import{stuck.length===1?"":"s"} did not finish. Their questions are stored but held back.</p>}
+      {!batches.length&&<p className="muted">No files uploaded yet.</p>}
+      {batches.map(b=><article key={b.id}>
+        <div className="review-head">
+          <span className={b.status==="ready"?"tag tag-pass":"tag tag-warn"}>{b.status==="ready"?"Complete":"Incomplete"}</span>
+          <strong dir="auto">{b.filename}</strong>
+          <span className="muted">{b.uploaded_at.slice(0,16).replace("T"," ")}</span>
+        </div>
+        <div className="muted">{b.stored} question{b.stored===1?"":"s"} stored{b.skipped_count?`, ${b.skipped_count} row(s) rejected`:""}</div>
+        {b.status!=="ready"&&<div><button onClick={()=>complete(b)}>Complete import</button></div>}
+      </article>)}
+    </section>
+  </>;
+}
+
+// "total" counts only questions a reviewer can actually be given, so it is
+// labelled as such: an unfinished import leaves its questions out of every
+// figure here until it is completed.
+const METRICS = [["total","Available to review"],["reviewed","Reviewed"],["pending","Pending"],
+  ["assigned","In progress"],["passed","Passed"],["failed","Failed"]] as const;
+
+function Analytics({token}:{token:string}){
+  const [m,setM]=useState<Metrics>(); const {batches}=useBatches(token);
+  useEffect(()=>{api<Metrics>("/api/admin/analytics",token).then(setM)},[token]);
+  const stuck=batches.filter(b=>b.status!=="ready");
+  const held=stuck.reduce((n,b)=>n+b.stored,0);
+  if(!m)return <p>Loading…</p>;
+  return <>
+    {held>0&&<section className="card"><p className="error">{held} uploaded question{held===1?"":"s"} are missing from these figures because {stuck.length} import{stuck.length===1?"":"s"} never finished. Complete {stuck.length===1?"it":"them"} under Upload to make {stuck.length===1?"it":"them"} reviewable.</p></section>}
+    <div className="metrics">{METRICS.map(([k,label])=><section className="metric" key={k}><span>{label}</span><strong>{m[k]}</strong></section>)}</div>
+    <div className="grid"><Bars title="Reviews by reviewer" rows={m.by_reviewer.map(x=>[x.reviewer,x.reviews])}/><Bars title="Reviews over time" rows={m.over_time.map(x=>[x.date,x.reviews])}/></div>
+  </>;
+}
 function Bars({title,rows}:{title:string;rows:[string,number][]}){const max=Math.max(1,...rows.map(x=>x[1]));return <section className="card"><h2>{title}</h2>{rows.length?rows.map(([label,value])=><div className="bar" key={label}><span dir="auto">{label}</span><i><b style={{width:`${value/max*100}%`}}/></i><strong>{value}</strong></div>):<p>No completed reviews yet.</p>}</section>}
 
 type ReviewRow = {review_id:number; source_id:string; instruction:string; question:string; output:string;
@@ -76,7 +150,7 @@ function Reviews({token}:{token:string}){
     catch(e){setStatus((e as Error).message)}};
   return <section className="card"><h2>Review management</h2>
     <p className="muted">Read the question and the reviewed answer together to judge whether a decision should stand.</p>
-    <div className="actions"><input placeholder="Search question, output, notes or reviewer" value={search}
+    <div className="toolbar"><input placeholder="Search question, output, notes or reviewer" value={search}
       onChange={e=>setSearch(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")void load(search)}} />
       <button onClick={()=>void load(search)}>Search</button></div>
     <nav>{(["All","Pass","Fail"] as const).map(x=><button key={x} className={filter===x?"":"secondary"} onClick={()=>setFilter(x)}>{x}</button>)}</nav>
