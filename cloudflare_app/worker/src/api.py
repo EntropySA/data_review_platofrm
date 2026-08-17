@@ -43,22 +43,12 @@ def _identity(request: Request, role: str | None = None) -> Identity:
     return identity
 
 
-@app.middleware("http")
-async def cors(request: Request, call_next):
-    if request.method == "OPTIONS":
-        response = JSONResponse({}, status_code=204)
-    else:
-        response = await call_next(request)
-    origin = request.headers.get("origin", "")
-    allowed = _value(_env(request), "FRONTEND_ORIGIN")
-    # Production serves the frontend from this Worker, leaving FRONTEND_ORIGIN
-    # unset so that no cross-origin caller is granted access.
-    if origin and origin == allowed:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Vary"] = "Origin"
-        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    return response
+# This application deliberately registers no HTTP middleware. The Worker serves
+# the interface and this API from one origin, and the Vite dev server proxies
+# /api, so requests are same-origin everywhere and need no CORS headers.
+# A Starlette BaseHTTPMiddleware here also drove roughly one request in six to
+# a 1101 "will never generate a response" failure, because its task group could
+# be dropped by the Workers event loop before a response was produced.
 
 
 @app.exception_handler(StoreConflict)

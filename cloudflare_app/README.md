@@ -45,12 +45,13 @@ Frontend, in a second terminal:
 
 ```bash
 cd cloudflare_app/frontend
-cp .env.example .env
 npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5173`. The dev server proxies `/api` to the Worker on
+port 8787, so development is same-origin exactly like production and no `.env`
+file is needed.
 
 ## First Cloudflare deployment
 
