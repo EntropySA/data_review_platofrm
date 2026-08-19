@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -9,6 +10,28 @@ from typing import Any
 
 class StoreConflict(ValueError):
     pass
+
+
+# Reviews written by the checking scripts rather than a person. A fixed, plainly
+# non-human name keeps them separable in the Reviews tab and the by-reviewer
+# analytics, so a rule that turns out wrong can be found and undone in bulk.
+AUTOMATIC_REVIEWER = "مراجعة آلية"
+
+# Bound parameters per statement are limited, so questions are looked up in
+# groups well inside that ceiling.
+LOOKUP_CHUNK = 50
+
+
+def content_hash(instruction: str, input_parts: list[str], output: str) -> str:
+    """Fingerprint of a question's content.
+
+    Must stay identical to autoreview.row_hash in the repository root, which is
+    what the checking script writes into its workbook; tests assert the two
+    agree. The separators are control characters that cannot appear in the
+    imported JSON, so no combination of fields can collide with another.
+    """
+    payload = "\x1f".join([instruction, "\x1e".join(input_parts), output])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _row(value: Any) -> dict | None:
@@ -231,6 +254,85 @@ class D1ReviewStore:
             ])
         except Exception as exc:
             raise StoreConflict("Question has already been reviewed.") from exc
+
+    async def bulk_fail(self, items: list[dict], actor: str) -> dict:
+        """Fail every question whose source id and content match a given item.
+
+        Matching on content as well as source id is what makes this safe to run
+        unattended: source ids are only unique within an upload, so an id alone
+        could name a question from an entirely different file. An item matching
+        nothing is reported rather than applied to the closest candidate.
+
+        A question already failed is left exactly as it is. A question a person
+        passed is rewritten to a failure, with the whole of their review kept in
+        audit_events first, so the decision this overrode stays recoverable.
+        """
+        wanted = {(item["source_id"], item["row_hash"]): item["notes"] for item in items}
+        source_ids = list(dict.fromkeys(item["source_id"] for item in items))
+
+        candidates: list[dict] = []
+        for start in range(0, len(source_ids), LOOKUP_CHUNK):
+            chunk = source_ids[start:start + LOOKUP_CHUNK]
+            placeholders = ",".join(f"?{index}" for index in range(1, len(chunk) + 1))
+            result = await self.db.prepare(
+                f"""SELECT q.id,q.source_id,q.instruction,q.input_json,q.output,
+                    r.id review_id,r.decision,r.notes,r.reviewer,r.reviewed_at
+                    FROM questions q LEFT JOIN reviews r ON r.question_id=q.id
+                    WHERE q.source_id IN ({placeholders})"""
+            ).bind(*chunk).all()
+            candidates.extend(_rows(result.results))
+
+        now = _now().isoformat()
+        statements: list[Any] = []
+        matched: set[tuple[str, str]] = set()
+        failed = overwritten = already_failed = 0
+
+        for row in candidates:
+            key = (row["source_id"], content_hash(
+                row["instruction"], json.loads(row["input_json"]), row["output"]))
+            notes = wanted.get(key)
+            if notes is None:
+                continue
+            matched.add(key)
+            if row["decision"] == "Fail":
+                already_failed += 1
+                continue
+            # A live lease is released so the question leaves the reviewer's
+            # queue, exactly as submitting a review does.
+            statements.append(self.db.prepare(
+                "DELETE FROM assignments WHERE question_id=?1").bind(row["id"]))
+            if row["decision"] == "Pass":
+                overwritten += 1
+                previous = {key: row[key] for key in
+                            ("review_id", "decision", "notes", "reviewer", "reviewed_at")}
+                statements.append(self.db.prepare(
+                    """INSERT INTO audit_events
+                       (event_type,question_id,review_id,actor,details_json,created_at)
+                       VALUES('review_overridden',?1,?2,?3,?4,?5)"""
+                ).bind(row["id"], row["review_id"], actor,
+                       json.dumps({**previous, "replaced_with": notes}, ensure_ascii=False), now))
+                statements.append(self.db.prepare(
+                    """UPDATE reviews SET decision='Fail',notes=?1,reviewer=?2,reviewed_at=?3
+                       WHERE id=?4"""
+                ).bind(notes, AUTOMATIC_REVIEWER, now, row["review_id"]))
+            else:
+                failed += 1
+                statements.append(self.db.prepare(
+                    """INSERT INTO reviews(question_id,decision,notes,reviewer,reviewed_at)
+                       VALUES(?1,'Fail',?2,?3,?4)"""
+                ).bind(row["id"], notes, AUTOMATIC_REVIEWER, now))
+                statements.append(self.db.prepare(
+                    """INSERT INTO audit_events
+                       (event_type,question_id,actor,details_json,created_at)
+                       VALUES('auto_fail',?1,?2,?3,?4)"""
+                ).bind(row["id"], actor,
+                       json.dumps({"notes": notes}, ensure_ascii=False), now))
+
+        if statements:
+            await self.db.batch(statements)
+        unmatched = [source_id for source_id, _hash in wanted if (source_id, _hash) not in matched]
+        return {"failed": failed, "overwritten": overwritten,
+                "already_failed": already_failed, "unmatched": unmatched}
 
     async def analytics(self) -> dict:
         now = _now().isoformat()

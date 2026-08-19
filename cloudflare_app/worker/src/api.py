@@ -5,11 +5,13 @@ from fastapi.responses import JSONResponse
 
 try:
     from .auth import AuthenticationError, Identity, authenticate_password, issue_token, verify_token
-    from .models import ImportChunk, ImportStart, LoginRequest, LoginResponse, ResetRequest, ReviewSubmission
+    from .models import (BulkFailRequest, ImportChunk, ImportStart, LoginRequest,
+                         LoginResponse, ResetRequest, ReviewSubmission)
     from .store import D1ReviewStore, StoreConflict
 except ImportError:  # Cloudflare loads Worker modules as top-level modules.
     from auth import AuthenticationError, Identity, authenticate_password, issue_token, verify_token
-    from models import ImportChunk, ImportStart, LoginRequest, LoginResponse, ResetRequest, ReviewSubmission
+    from models import (BulkFailRequest, ImportChunk, ImportStart, LoginRequest,
+                        LoginResponse, ResetRequest, ReviewSubmission)
     from store import D1ReviewStore, StoreConflict
 
 
@@ -152,6 +154,13 @@ async def reset(payload: ResetRequest, request: Request):
     identity = _identity(request, "admin")
     await _store(request).reset_review(payload.review_id, identity.name)
     return {"ok": True}
+
+
+@app.post("/api/admin/reviews/bulk-fail")
+async def bulk_fail(payload: BulkFailRequest, request: Request):
+    identity = _identity(request, "admin")
+    return await _store(request).bulk_fail(
+        [item.model_dump() for item in payload.items], identity.name)
 
 
 @app.get("/api/admin/export")

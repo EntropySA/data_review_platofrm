@@ -53,3 +53,15 @@ class QuestionResponse(BaseModel):
 
 class ResetRequest(BaseModel):
     review_id: int
+
+
+class BulkFailItem(BaseModel):
+    source_id: str
+    row_hash: str = Field(min_length=64, max_length=64)
+    notes: str = Field(min_length=1)
+
+
+class BulkFailRequest(BaseModel):
+    # Each item can produce up to three statements, so the cap keeps a batch
+    # close in size to the import chunk that already runs in production.
+    items: list[BulkFailItem] = Field(max_length=100)

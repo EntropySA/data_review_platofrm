@@ -30,6 +30,10 @@ class FakeStore:
                  "imported_count": 500, "skipped_count": 0, "status": "uploading",
                  "stored": 320, "reviewed": 0}]
 
+    async def bulk_fail(self, items, actor):
+        self.bulk_fail_call = (items, actor)
+        return {"failed": len(items), "overwritten": 0, "already_failed": 0, "unmatched": []}
+
     async def delete_batch(self, batch_id, actor):
         if batch_id == 2:
             raise StoreConflict("4 question(s) in this upload have already been reviewed.")
@@ -117,3 +121,47 @@ def test_reviewer_cannot_open_admin_analytics():
         response = client.get("/api/admin/analytics",
                               headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 403
+
+
+HASH = "a" * 64
+
+
+def test_admin_records_automatic_failures_in_bulk():
+    app.state.env = Env()
+    app.state.store = FakeStore()
+    with TestClient(app) as client:
+        token = login(client, "admin-secret")
+        response = client.post(
+            "/api/admin/reviews/bulk-fail",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"items": [{"source_id": "42", "row_hash": HASH, "notes": "سؤال مكرر"}]})
+    assert response.status_code == 200
+    assert response.json()["failed"] == 1
+    items, actor = app.state.store.bulk_fail_call
+    assert items[0]["notes"] == "سؤال مكرر"
+    assert actor == "Admin"
+
+
+def test_a_reviewer_cannot_record_automatic_failures():
+    app.state.env = Env()
+    app.state.store = FakeStore()
+    with TestClient(app) as client:
+        token = login(client, "review-secret", "أمينة")
+        response = client.post(
+            "/api/admin/reviews/bulk-fail",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"items": [{"source_id": "42", "row_hash": HASH, "notes": "سؤال مكرر"}]})
+    assert response.status_code == 403
+
+
+def test_an_item_without_a_full_hash_or_notes_is_refused():
+    app.state.env = Env()
+    app.state.store = FakeStore()
+    with TestClient(app) as client:
+        token = login(client, "admin-secret")
+        headers = {"Authorization": f"Bearer {token}"}
+        short = client.post("/api/admin/reviews/bulk-fail", headers=headers,
+                            json={"items": [{"source_id": "42", "row_hash": "abc", "notes": "x"}]})
+        blank = client.post("/api/admin/reviews/bulk-fail", headers=headers,
+                            json={"items": [{"source_id": "42", "row_hash": HASH, "notes": ""}]})
+    assert short.status_code == 422 and blank.status_code == 422

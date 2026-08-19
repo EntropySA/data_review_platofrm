@@ -63,6 +63,46 @@ docker compose up --build -d
 
 The compose configuration runs one app instance and stores SQLite files in the local `data` directory. Put the service behind HTTPS using the private server's reverse proxy or VPN. Do not increase the replica count; a multi-instance deployment should migrate persistence to Postgres first.
 
+## Automatic review
+
+Two command-line tools apply the checks that need no human judgment, and record
+what they find in the Cloudflare platform.
+
+```bash
+python auto_review.py --type arabizi data.json -o failures.xlsx
+python apply_review.py failures.xlsx --dry-run     # report only
+python apply_review.py failures.xlsx               # write to the platform
+```
+
+`auto_review.py` reads only the file named on the command line: no network, no
+credentials, no database. Every data type is checked for duplicates — records
+whose `instruction` and `input` are identical, keeping the first and failing the
+rest — and then against the rules for its `--type`:
+
+| Type | Checks |
+| --- | --- |
+| `arabizi` | No Latin letter in the output; the output uses the same punctuation marks as the input, with `؟` `،` `؛` treated as `?` `,` `;` |
+| `tool_calling` | The tool named in each `<tool_call>` is one the instruction offers; its arguments are all declared by that tool; every required parameter is present |
+| `saudi_dialect` | No punctuation in the output; every output word appears in the input character-for-character, tashkeel and hamza forms included |
+| `arabic_grammar` | The output, trimmed, is exactly one of `أ` `ب` `ج` `د` |
+
+The workbook has two sheets. `الأخطاء` holds the failures and is the only sheet
+`apply_review.py` reads. `غير مفحوص` holds records no rule could judge — a
+tool-calling instruction with no readable schema, for instance — so a parser's
+limitation never becomes a failure in the database.
+
+`apply_review.py` prompts for the admin password (or reads
+`REVIEW_ADMIN_PASSWORD`) and posts to `/api/admin/reviews/bulk-fail`. Each row is
+matched by source id **and** a hash of the question's content, so a row whose
+content no longer matches is reported rather than applied to another question.
+A question already failed is left untouched; a question a person passed is
+failed, with their review preserved in `audit_events` first. Automatic decisions
+are recorded under the reviewer name `مراجعة آلية`, which keeps them separable
+from human ones in the Reviews tab and the analytics.
+
+Re-running the same workbook is safe: everything reports as already failed and
+nothing changes.
+
 ## Verification
 
 ```bash
