@@ -28,6 +28,10 @@ from typing import Callable, Iterable, Sequence
 from reporting import FAILURE_SHEET
 
 DEFAULT_URL = "https://review-desk-api.entropy-data-review.workers.dev"
+# Cloudflare's browser integrity check rejects urllib's default agent at the
+# edge with a 1010, before the request ever reaches the Worker. Naming the
+# tool is both honest and enough to get through.
+USER_AGENT = "review-desk-apply/1.0"
 CHUNK = 100
 REQUIRED_COLUMNS = ("source_id", "notes", "row_hash")
 
@@ -88,7 +92,7 @@ class Client:
         request = urllib.request.Request(
             f"{self.url}{path}", method="POST",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json",
+            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT,
                      **({"Authorization": f"Bearer {self.token}"} if self.token else {})})
         try:
             with self.opener(request, timeout=60) as response:
@@ -99,6 +103,11 @@ class Client:
                 detail = json.loads(detail).get("detail", detail)
             except ValueError:
                 pass
+            if "error code:" in detail:
+                # Cloudflare's edge answered, not the platform, so the detail is
+                # a bare code that says nothing about the request itself.
+                detail += (" — this came from Cloudflare's edge, not the review platform. "
+                           "The request was blocked before reaching it.")
             raise ApplyError(f"{path} failed ({error.code}): {detail}") from error
         except urllib.error.URLError as error:
             raise ApplyError(f"Could not reach {self.url}: {error.reason}") from error

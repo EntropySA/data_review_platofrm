@@ -2,7 +2,8 @@ import json
 
 import pytest
 
-from apply_review import ApplyError, Client, apply_failures, chunked, read_failures
+from apply_review import (USER_AGENT, ApplyError, Client, apply_failures, chunked,
+                          read_failures)
 from reporting import create_failure_export
 
 HASH = "a" * 64
@@ -139,3 +140,18 @@ def test_the_token_is_carried_on_the_bulk_request():
     assert seen[0].headers.get("Authorization") is None
     assert seen[1].headers["Authorization"] == "Bearer abc"
     assert json.loads(seen[1].data.decode("utf-8"))["items"][0]["notes"] == "سؤال مكرر"
+
+
+def test_requests_do_not_carry_urllibs_default_agent():
+    """Cloudflare's browser integrity check answers Python-urllib/* with a 1010
+    at the edge, so the request never reaches the Worker."""
+    seen = []
+
+    def opener(request, timeout=None):
+        seen.append(request)
+        return FakeResponse({"token": "abc", "role": "admin", "name": "Admin"})
+
+    Client("https://example.test", opener=opener).login("admin-secret")
+    agent = seen[0].headers["User-agent"]
+    assert agent == USER_AGENT
+    assert not agent.startswith("Python-urllib")
